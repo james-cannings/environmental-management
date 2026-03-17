@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+@theme inline {
+  /* MSQ Brand Colours */
+  --color-msq-blue: #0000EB;
+  --color-msq-off-white: #ECECE7;
+  --color-msq-blue-1: #4950A3;
+  --color-msq-blue-2: #A8ABD3;
+  --color-msq-orange-1: #EE713B;
+  --color-msq-orange-2: #F5C65A;
+  --color-msq-green-1: #3F8F69;
+  --color-msq-green-2: #91BFAA;
+  --color-msq-pink-1: #E573B4;
+  --color-msq-pink-2: #FFA4B8;
+
+  /* Font */
+  --font-sans: "Poppins", system-ui, sans-serif;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #ECECE7;
+  color: #000000;
+}

@@ -1,0 +1,81 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Agency {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  cozeroEntityId  String?
+  contactEmail    String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  uploads         Upload[]
+  processingRuns  ProcessingRun[]
+}
+
+model Upload {
+  id              String   @id @default(cuid())
+  agencyId        String
+  agency          Agency   @relation(fields: [agencyId], references: [id])
+  originalFilename String
+  storedPath      String
+  fileType        String
+  rowCount        Int?
+  status          String   @default("uploaded")
+  errorMessage    String?
+  uploadedAt      DateTime @default(now())
+  parsedData      String?
+
+  processingRuns  ProcessingRun[]
+}
+
+model ProcessingRun {
+  id              String   @id @default(cuid())
+  uploadId        String
+  upload          Upload   @relation(fields: [uploadId], references: [id])
+  agencyId        String
+  agency          Agency   @relation(fields: [agencyId], references: [id])
+  status          String   @default("pending")
+  startedAt       DateTime?
+  completedAt     DateTime?
+  errorMessage    String?
+  createdAt       DateTime @default(now())
+
+  steps           ProcessingStep[]
+  cozeroePushes   CozeroPush[]
+}
+
+model ProcessingStep {
+  id              String   @id @default(cuid())
+  runId           String
+  run             ProcessingRun @relation(fields: [runId], references: [id])
+  stepName        String
+  stepOrder       Int
+  status          String   @default("pending")
+  inputData       String?
+  outputData      String?
+  errorMessage    String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+}
+
+model CozeroPush {
+  id              String   @id @default(cuid())
+  runId           String
+  run             ProcessingRun @relation(fields: [runId], references: [id])
+  cozeroEndpoint  String
+  requestPayload  String
+  responseStatus  Int?
+  responseBody    String?
+  status          String   @default("pending")
+  errorMessage    String?
+  pushedAt        DateTime?
+  createdAt       DateTime @default(now())
+}
