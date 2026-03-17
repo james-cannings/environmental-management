@@ -7,75 +7,247 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Agency {
-  id              String   @id @default(cuid())
-  name            String   @unique
-  cozeroEntityId  String?
-  contactEmail    String?
-  isActive        Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+// ─────────────────────────────────────────────────────────
+// Agency — MSQ group agencies with Cozero platform IDs
+// ─────────────────────────────────────────────────────────
 
-  uploads         Upload[]
-  processingRuns  ProcessingRun[]
+model Agency {
+  id                  String   @id @default(cuid())
+  name                String   @unique
+  country             String   @default("United Kingdom")
+  cozeroLocationId    Int?
+  cozeroBusinessUnitId Int?
+  cozeroTerritoryId   Int?
+  dbNames             String?  // JSON array of Cognos DB Name values mapping to this agency
+  contactEmail        String?
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  uploads             Upload[]
+  processingRuns      ProcessingRun[]
+  exclusions          AgencyExclusion[]
 }
+
+// ─────────────────────────────────────────────────────────
+// Upload — Uploaded files awaiting or in processing
+// ─────────────────────────────────────────────────────────
 
 model Upload {
-  id              String   @id @default(cuid())
-  agencyId        String
-  agency          Agency   @relation(fields: [agencyId], references: [id])
+  id               String   @id @default(cuid())
+  agencyId         String
+  agency           Agency   @relation(fields: [agencyId], references: [id])
   originalFilename String
-  storedPath      String
-  fileType        String
-  rowCount        Int?
-  status          String   @default("uploaded")
-  errorMessage    String?
-  uploadedAt      DateTime @default(now())
-  parsedData      String?
+  storedPath       String
+  fileType         String   // xlsx, csv
+  pipelineType     String   // cognos, credit_card, travelperk, corporate_traveller
+  rowCount         Int?
+  status           String   @default("uploaded") // uploaded | parsed | processing | processed | error
+  errorMessage     String?
+  uploadedAt       DateTime @default(now())
+  parsedData       String?  // JSON: raw parsed rows (large, cleared after processing)
 
-  processingRuns  ProcessingRun[]
+  processingRuns   ProcessingRun[]
 }
+
+// ─────────────────────────────────────────────────────────
+// ProcessingRun — A single pipeline execution
+// ─────────────────────────────────────────────────────────
 
 model ProcessingRun {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   uploadId        String
-  upload          Upload   @relation(fields: [uploadId], references: [id])
+  upload          Upload    @relation(fields: [uploadId], references: [id])
   agencyId        String
-  agency          Agency   @relation(fields: [agencyId], references: [id])
-  status          String   @default("pending")
+  agency          Agency    @relation(fields: [agencyId], references: [id])
+  pipelineType    String    // cognos, credit_card, travelperk, corporate_traveller
+  financialYear   String?   // e.g. "FY26"
+  quarter         String?   // e.g. "Q1,Q2" (comma-separated)
+  status          String    @default("pending") // pending | running | completed | failed | cancelled
+  inputRowCount   Int?
+  excludedCount   Int?
+  categorisedCount Int?
+  remainingCount  Int?
   startedAt       DateTime?
   completedAt     DateTime?
   errorMessage    String?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime  @default(now())
 
   steps           ProcessingStep[]
-  cozeroePushes   CozeroPush[]
+  pushes          CozeroPush[]
+  transactions    Transaction[]
 }
 
+// ─────────────────────────────────────────────────────────
+// ProcessingStep — Individual step within a processing run
+// ─────────────────────────────────────────────────────────
+
 model ProcessingStep {
-  id              String   @id @default(cuid())
-  runId           String
-  run             ProcessingRun @relation(fields: [runId], references: [id])
-  stepName        String
-  stepOrder       Int
-  status          String   @default("pending")
-  inputData       String?
-  outputData      String?
-  errorMessage    String?
-  startedAt       DateTime?
-  completedAt     DateTime?
+  id           String   @id @default(cuid())
+  runId        String
+  run          ProcessingRun @relation(fields: [runId], references: [id])
+  stepName     String
+  stepOrder    Int
+  status       String   @default("pending") // pending | running | completed | failed | skipped
+  inputCount   Int?
+  outputCount  Int?
+  metadata     String?  // JSON: step-specific summary data
+  errorMessage String?
+  startedAt    DateTime?
+  completedAt  DateTime?
 }
+
+// ─────────────────────────────────────────────────────────
+// Transaction — Individual processed transaction
+// ─────────────────────────────────────────────────────────
+
+model Transaction {
+  id                  String   @id @default(cuid())
+  runId               String
+  run                 ProcessingRun @relation(fields: [runId], references: [id])
+  transactionId       String   // Pipeline-assigned ID (e.g. FY26-00001, CC-00001, TV-00001)
+  pipelineType        String
+
+  // Source data (preserved exactly as uploaded)
+  agency              String
+  supplierCompany     String?
+  narrative           String?
+  amount              Float?
+  currency            String   @default("GBP")
+  transactionDate     String?  // ISO date string
+  cognosDescription   String?
+  transactionSubType  String?
+  dbName              String?
+  mccDescription      String?
+  expType             String?
+  description         String?  // Credit card description field
+  cardholder          String?
+  originalValue       String?
+  originalCurrency    String?
+
+  // Travel-specific fields
+  service             String?  // Flights, Hotels, Trains
+  value               Float?   // Distance (miles/km) or nights
+  valueUnit           String?  // miles, km, room nights, GBP
+  hotelCountry        String?
+  startDate           String?
+  endDate             String?
+
+  // Categorisation result
+  pipelineStatus      String   @default("active") // active | excluded | categorised | pending_review
+  pipelineStep        String?  // Which step categorised/excluded this
+  pipelineReason      String?  // Why
+  logCategory         String?  // e.g. "Purchased services"
+  logSubcategory      String?  // e.g. "ICT services"
+  businessActivity    String?  // e.g. "Software"
+  confidence          String?  // HIGH | MEDIUM | LOW (AI only)
+  aiReasoning         String?  // AI reasoning text
+
+  // Cozero IDs (resolved during assembly)
+  cozeroCategoryId    Int?
+  cozeroSubcategoryId Int?
+  cozeroActivityId    Int?
+  cozeroSupplierId    Int?
+
+  // Cozero payload fields (for upload)
+  locationId          Int?
+  businessUnitId      Int?
+  territoryId         Int?
+  calculationMethodId Int?
+  unitId              Int?
+  inputKey            String?  // spend | default
+  dataQuality         String?  @default("PRIMARY")
+  readyToUpload       Boolean  @default(false)
+  missingIds          String?  // Comma-separated list of missing IDs
+
+  createdAt           DateTime @default(now())
+
+  @@index([runId])
+  @@index([pipelineStatus])
+}
+
+// ─────────────────────────────────────────────────────────
+// CozeroPush — Record of each Cozero API call
+// ─────────────────────────────────────────────────────────
 
 model CozeroPush {
   id              String   @id @default(cuid())
   runId           String
   run             ProcessingRun @relation(fields: [runId], references: [id])
+  transactionId   String?  // Links back to Transaction.transactionId
   cozeroEndpoint  String
-  requestPayload  String
+  requestPayload  String   // JSON
   responseStatus  Int?
-  responseBody    String?
-  status          String   @default("pending")
+  responseBody    String?  // JSON
+  cozeroLogId     Int?     // Cozero log ID returned on creation
+  status          String   @default("pending") // pending | sent | success | failed
   errorMessage    String?
   pushedAt        DateTime?
   createdAt       DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────
+// Configuration tables — migrated from Google Sheets
+// ─────────────────────────────────────────────────────────
+
+model Supplier {
+  id               String   @id @default(cuid())
+  name             String   @unique
+  cozeroSupplierId Int?
+  businessActivity String   // Cozero activity name or "Out of scope"
+  source           String?  // Where this mapping came from
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model UnmappedSupplier {
+  id               String   @id @default(cuid())
+  name             String   @unique
+  cozeroSupplierId Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model ActivityTaxonomy {
+  id             String @id @default(cuid())
+  categoryName   String // e.g. "Business travel"
+  categoryId     Int    // Cozero category ID
+  subcategoryName String // e.g. "Flight travel"
+  subcategoryId  Int    // Cozero subcategory ID
+  activityName   String @unique // e.g. "Flights"
+  activityId     Int    // Cozero activity data source ID
+
+  @@index([activityName])
+}
+
+model AgencyExclusion {
+  id                String  @id @default(cuid())
+  agencyId          String
+  agency            Agency  @relation(fields: [agencyId], references: [id])
+  supplierName      String
+  narrativeContains String? // Comma-separated keywords for conditional exclusion; empty = full exclusion
+  reason            String?
+
+  @@index([agencyId])
+}
+
+model CalculationMethod {
+  id       String @id @default(cuid())
+  key      String @unique // e.g. "employee-distance", "nights", "spend"
+  cozeroId Int              // Cozero calculation method ID
+  label    String?          // Human-readable label
+}
+
+model Unit {
+  id       String @id @default(cuid())
+  key      String @unique // e.g. "mile", "km", "room night", "GBP"
+  cozeroId Int              // Cozero unit ID
+  label    String?
+}
+
+model TerritoryMapping {
+  id          String @id @default(cuid())
+  countryCode String @unique // ISO 2-letter code
+  cozeroId    Int              // Cozero territory ID
+  countryName String?
 }

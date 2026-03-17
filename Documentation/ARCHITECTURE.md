@@ -1,11 +1,9 @@
 # MSQ Sustainability Data Manager — Architecture Guide
 
-**Version:** 1.2
+**Version:** 2.0
 **Date:** 17 March 2026
 **Stack:** Next.js 15 + TypeScript + React 19 + Prisma (SQLite) + Tailwind CSS
 **Purpose:** Sustainability data upload, transformation, and push to Cozero for MSQ Partners agencies
-
-> **Note:** The foundational scaffold has been implemented (Brief 01). The file map below reflects both implemented structure and planned future modules. Service modules (`src/services/`), API routes (`src/api/`), and feature components will be built in subsequent briefs.
 
 ---
 
@@ -22,12 +20,18 @@
 
 ## §1 — Application Overview
 
-MSQ Partners is a group of marketing agencies. Each agency must report sustainability data (energy consumption, financial spend, travel, waste, etc.) to a central sustainability platform called Cozero. The current process uses a set of n8n automation workflows to ingest spreadsheets, transform the data, and push it to the Cozero REST API.
+MSQ Partners is a group of 20 marketing agencies. Each agency must report Scope 3 sustainability data (financial transactions, travel, purchased goods/services) to a central sustainability platform called Cozero. The current process uses a set of n8n automation workflows to ingest spreadsheets, transform the data, and push it to the Cozero REST API.
 
-This application replaces those n8n workflows with a purpose-built web interface. Staff at each MSQ agency upload data through the browser. The application validates, transforms, and maps that data — replicating and improving the logic currently handled by n8n — and pushes the results to Cozero via its REST API. Some transformation steps use the Anthropic API for LLM-assisted data extraction and categorisation.
+This application replaces those n8n workflows with a purpose-built web interface. Staff upload data through the browser. The application validates, transforms, categorises and maps that data — replicating the logic from the n8n workflows — and pushes the results to Cozero via its REST API. Some transformation steps use the Anthropic API (Claude Sonnet 4.6) for LLM-assisted supplier recommendation and per-transaction categorisation.
 
-**Users:** Agency sustainability contacts and administrators at MSQ Partners.  
-**Deployment:** Runs locally as a web application. No cloud deployment infrastructure at this stage.
+**Four data pipelines:**
+- **Cognos** — Financial transactions from IBM Cognos (XLSX). Multi-agency, multi-quarter. AI-assisted categorisation.
+- **Credit Card** — Barclaycard statements for MSQ DX UK (XLSX). MCC-based + AI-assisted categorisation.
+- **TravelPerk** — Travel bookings for MSQ DX UK and MSQ Partners Central (CSV). Rule-based, no AI.
+- **Corporate Traveller** — Travel bookings for Smarts UK and Smarts Netherlands (XLSX). Rule-based, no AI.
+
+**Users:** Agency sustainability contacts and administrators at MSQ Partners.
+**Deployment:** Runs locally as a web application.
 
 ---
 
@@ -36,101 +40,102 @@ This application replaces those n8n workflows with a purpose-built web interface
 ```
 sustainability-app/
 ├── prisma/
-│   ├── schema.prisma              ← Database schema definition
+│   ├── schema.prisma              ← Database schema (15 models)
 │   ├── migrations/                ← Prisma migration history
-│   └── seed.ts                    ← Seed script: default agencies, activity types
+│   └── seed.ts                    ← Seed: 20 agencies, 37 activities, 3 calc methods, 4 units, 25 territories
 ├── src/
 │   ├── app/                       ← Next.js App Router pages and layouts
-│   │   ├── layout.tsx             ← Root layout: HTML shell, global providers, nav
-│   │   ├── page.tsx               ← Dashboard / home page
+│   │   ├── layout.tsx             ← Root layout: HTML shell, Poppins font, AppShell
+│   │   ├── globals.css            ← Global styles, MSQ colour palette
+│   │   ├── page.tsx               ← Dashboard: summary cards, recent runs table
 │   │   ├── upload/
-│   │   │   └── page.tsx           ← Data upload page
+│   │   │   └── page.tsx           ← Upload: pipeline type, agency, file drop, process trigger
 │   │   ├── processing/
-│   │   │   └── page.tsx           ← Processing runs list and status
+│   │   │   └── page.tsx           ← Processing runs list with status/counts
 │   │   ├── processing/[id]/
-│   │   │   └── page.tsx           ← Individual processing run detail
+│   │   │   └── page.tsx           ← Run detail: step progress, transaction summary
+│   │   ├── suppliers/
+│   │   │   └── page.tsx           ← Supplier management: search, sync with Cozero
 │   │   ├── history/
-│   │   │   └── page.tsx           ← Cozero push history and logs
+│   │   │   └── page.tsx           ← Cozero push history table
 │   │   ├── agencies/
-│   │   │   └── page.tsx           ← Agency configuration and management
-│   │   └── settings/
-│   │       └── page.tsx           ← Application settings (API keys, defaults)
-│   ├── api/                       ← Next.js API routes (Route Handlers)
-│   │   ├── upload/
-│   │   │   └── route.ts           ← POST: receive file upload, validate, store
-│   │   ├── processing/
-│   │   │   ├── route.ts           ← POST: trigger processing run; GET: list runs
-│   │   │   └── [id]/
-│   │   │       └── route.ts       ← GET: run status/detail; POST: retry failed steps
-│   │   ├── push/
-│   │   │   └── route.ts           ← POST: push processed data to Cozero
-│   │   ├── agencies/
-│   │   │   └── route.ts           ← CRUD operations for agency configuration
-│   │   └── settings/
-│   │       └── route.ts           ← GET/PUT application settings
+│   │   │   └── page.tsx           ← Agency config: inline edit Cozero IDs
+│   │   ├── settings/
+│   │   │   └── page.tsx           ← Config viewer: activities, methods, units, territories
+│   │   └── api/
+│   │       ├── upload/
+│   │       │   └── route.ts       ← POST: file upload with pipeline type
+│   │       ├── processing/
+│   │       │   ├── route.ts       ← GET: list runs; POST: trigger processing
+│   │       │   └── [id]/
+│   │       │       └── route.ts   ← GET: run detail with steps and transaction summary
+│   │       ├── push/
+│   │       │   └── route.ts       ← GET: push history; POST: push to Cozero (3-step)
+│   │       ├── agencies/
+│   │       │   └── route.ts       ← GET: list; POST: update Cozero IDs
+│   │       ├── suppliers/
+│   │       │   ├── route.ts       ← GET: search; POST: upsert supplier mapping
+│   │       │   └── sync/
+│   │       │       └── route.ts   ← POST: sync suppliers with Cozero
+│   │       └── config/
+│   │           ├── route.ts       ← GET: all config data (activities, methods, units, territories)
+│   │           └── import/
+│   │               └── route.ts   ← POST: import supplier mappings from CSV
 │   ├── components/
 │   │   ├── layout/
-│   │   │   ├── AppShell.tsx       ← Sidebar navigation + main content area
-│   │   │   ├── Sidebar.tsx        ← Navigation sidebar with route links
-│   │   │   └── Header.tsx         ← Top bar: app title, status indicators
-│   │   ├── upload/
-│   │   │   ├── FileDropzone.tsx   ← Drag-and-drop file upload area
-│   │   │   ├── FilePreview.tsx    ← Preview of uploaded file contents (table)
-│   │   │   ├── ColumnMapper.tsx   ← Map spreadsheet columns to expected fields
-│   │   │   └── UploadHistory.tsx  ← Recent uploads list for current agency
-│   │   ├── processing/
-│   │   │   ├── RunCard.tsx        ← Summary card for a processing run
-│   │   │   ├── RunDetail.tsx      ← Step-by-step detail of a processing run
-│   │   │   ├── StepStatus.tsx     ← Status indicator for an individual step
-│   │   │   └── RunActions.tsx     ← Retry / cancel / push actions for a run
-│   │   ├── agencies/
-│   │   │   ├── AgencyList.tsx     ← List of configured agencies
-│   │   │   ├── AgencyForm.tsx     ← Add/edit agency configuration
-│   │   │   └── AgencyCard.tsx     ← Summary card for an agency
-│   │   ├── history/
-│   │   │   ├── PushLog.tsx        ← Cozero push history table
-│   │   │   └── PushDetail.tsx     ← Detail view of a single push (request/response)
-│   │   ├── dashboard/
-│   │   │   ├── SummaryCards.tsx   ← Key metrics: recent uploads, pending runs, push status
-│   │   │   └── RecentActivity.tsx ← Timeline of recent activity across agencies
+│   │   │   ├── AppShell.tsx       ← Sidebar + header + main content area
+│   │   │   ├── Sidebar.tsx        ← MSQ Blue sidebar with 8 nav links
+│   │   │   └── Header.tsx         ← Top bar with page title
 │   │   └── shared/
-│   │       ├── StatusBadge.tsx    ← Reusable status badge (pending/processing/success/error)
-│   │       ├── DataTable.tsx      ← Reusable sortable/filterable table
-│   │       ├── ConfirmDialog.tsx  ← Reusable confirmation modal
-│   │       └── LoadingSpinner.tsx ← Consistent loading indicator
+│   │       ├── StatusBadge.tsx    ← Status badge (14 states, colour-coded)
+│   │       ├── DataTable.tsx      ← Generic sortable, searchable, paginated table
+│   │       ├── ConfirmDialog.tsx  ← Confirmation modal
+│   │       └── LoadingSpinner.tsx ← Loading indicator (sm/md/lg)
 │   ├── services/
-│   │   ├── cozero.ts             ← All Cozero REST API calls (single module)
-│   │   ├── anthropic.ts          ← All Anthropic API calls (single module)
-│   │   └── processing.ts         ← Data transformation pipeline orchestration
+│   │   ├── cozero.ts             ← Cozero REST API: auth, log CRUD, supplier CRUD, search
+│   │   ├── anthropic.ts          ← Anthropic API: supplier + transaction categorisation prompts
+│   │   ├── processing.ts         ← Top-level orchestrator: route to pipeline, manage run lifecycle
+│   │   └── processing/
+│   │       ├── categorisationEngine.ts ← Shared: exclusions, zero amounts, supplier mapping, MCC
+│   │       ├── cognosPipeline.ts       ← 9-step Cognos pipeline
+│   │       ├── creditCardPipeline.ts   ← 6-step Credit Card pipeline
+│   │       ├── travelPerkPipeline.ts   ← 3-step TravelPerk pipeline
+│   │       └── corporateTravellerPipeline.ts ← 3-step Corporate Traveller pipeline
 │   ├── lib/
 │   │   ├── db.ts                  ← Prisma client singleton
-│   │   ├── validators.ts          ← Zod schemas for upload validation
-│   │   ├── transformers.ts        ← Pure data transformation functions
-│   │   ├── columnMapping.ts       ← Spreadsheet column detection and mapping logic
-│   │   └── fileParser.ts          ← Parse uploaded files (XLSX, CSV) into structured data
+│   │   ├── fileParser.ts          ← XLSX/CSV parsing, date conversion, getString/getNumber
+│   │   ├── validators.ts          ← Column validation for all 4 pipeline types
+│   │   ├── transformers.ts        ← Transaction builders, Cozero payload assembly
+│   │   └── aiResponseParser.ts    ← Three-tier JSON parser (clean, extract, regex)
 │   ├── types/
-│   │   ├── upload.ts              ← Upload-related type definitions
-│   │   ├── processing.ts          ← Processing run and step types
-│   │   ├── cozero.ts              ← Cozero API request/response types
-│   │   ├── agency.ts              ← Agency configuration types
-│   │   └── anthropic.ts           ← Anthropic API request/response types
+│   │   ├── transaction.ts         ← PipelineTransaction, TravelPayload, SupplierRecommendation
+│   │   ├── processing.ts         ← PipelineResult, step constants (COGNOS_STEPS, etc.)
+│   │   ├── cozero.ts             ← Cozero API request/response types (snake_case for API)
+│   │   ├── anthropic.ts          ← Anthropic API types, AI parse result
+│   │   ├── upload.ts             ← Upload request/response types
+│   │   └── config.ts             ← ActivityEntry, MccRule, ExclusionPattern, CompanyMapping
 │   └── config/
-│       ├── activityTypes.ts       ← Cozero activity type definitions and mappings
-│       └── constants.ts           ← Application-wide constants
-├── public/                        ← Static assets
+│       ├── constants.ts           ← API URLs, model, batch sizes, Cozero IDs, aliases
+│       ├── activityTypes.ts       ← 37 activity taxonomy entries + buildActivityLookup()
+│       ├── mccRules.ts            ← 43 MCC rules + CC supplier rules
+│       ├── exclusionPatterns.ts   ← 26 exact + 3 partial Cognos exclusions
+│       ├── internalPatterns.ts    ← 18 MSQ group entity patterns + isInternalSupplier()
+│       ├── territoryMap.ts        ← 25 country → Cozero territory ID mappings
+│       └── companyMapping.ts      ← Travel company→agency mappings, service type constants
+├── public/
+│   └── msq-logo.svg              ← MSQ wordmark
 ├── uploads/                       ← Uploaded file storage (gitignored)
 ├── .env.local                     ← API keys and configuration (gitignored)
 ├── .env.example                   ← Template for required environment variables
-├── next.config.ts                 ← Next.js configuration
-├── tailwind.config.ts             ← Tailwind CSS configuration
-├── tsconfig.json                  ← TypeScript configuration
+├── next.config.ts
+├── tsconfig.json
 ├── package.json
 ├── CLAUDE.md                      ← Claude Code session instructions
 └── Documentation/
     ├── ARCHITECTURE.md            ← This file
-    ├── ARCHITECTURE_CHANGELOG.md  ← Version history
-    ├── PROJECT_INSTRUCTIONS_TEMPLATE.md  ← Claude Project system prompt
-    └── CODE_REVIEW_TEMPLATE.md    ← Code review template
+    ├── ARCHITECTURE_CHANGELOG.md
+    ├── PROJECT_INSTRUCTIONS_TEMPLATE.md
+    └── CODE_REVIEW_TEMPLATE.md
 ```
 
 ---
@@ -141,28 +146,32 @@ sustainability-app/
 
 | Route | Page | Purpose |
 |-------|------|---------|
-| `/` | Dashboard | Summary metrics, recent activity, quick-action links |
-| `/upload` | Upload | File upload, preview, column mapping, agency selection |
-| `/processing` | Processing Runs | List of all processing runs with status filters |
-| `/processing/[id]` | Run Detail | Step-by-step view of a single processing run |
-| `/history` | Push History | Log of all Cozero API pushes with status and detail |
-| `/agencies` | Agencies | Agency configuration: add, edit, view agency settings |
-| `/settings` | Settings | Application settings: API key configuration, defaults |
+| `/` | Dashboard | Summary cards, recent processing runs table |
+| `/upload` | Upload | Pipeline type selection, agency dropdown, FY/quarter (Cognos), drag-drop file, trigger processing |
+| `/processing` | Processing Runs | All runs with pipeline, agency, row counts, status |
+| `/processing/[id]` | Run Detail | Step-by-step progress, input/output counts, metadata, transaction summary |
+| `/suppliers` | Suppliers | Searchable supplier table, Cozero sync button |
+| `/history` | Push History | Cozero push log: transaction ID, log ID, status, errors |
+| `/agencies` | Agencies | Agency list with inline edit for Cozero Location/BU/Territory IDs |
+| `/settings` | Settings | Tabbed config viewer: activities, calculation methods, units, territories |
 
 ### API Routes
 
 | Method | Route | Purpose |
 |--------|-------|---------|
-| `POST` | `/api/upload` | Accept file upload, validate format, parse contents, store metadata in DB |
-| `GET` | `/api/processing` | List processing runs, filterable by status and agency |
-| `POST` | `/api/processing` | Trigger a new processing run for an uploaded dataset |
-| `GET` | `/api/processing/[id]` | Get detailed status of a processing run including all steps |
-| `POST` | `/api/processing/[id]` | Retry failed steps in a processing run |
-| `POST` | `/api/push` | Push processed data to Cozero API |
-| `GET` | `/api/agencies` | List all configured agencies |
-| `POST` | `/api/agencies` | Create or update agency configuration |
-| `GET` | `/api/settings` | Retrieve application settings |
-| `PUT` | `/api/settings` | Update application settings |
+| `POST` | `/api/upload` | Accept file upload (FormData), store to disk, create Upload record |
+| `GET` | `/api/processing` | List runs, filterable by pipelineType and status |
+| `POST` | `/api/processing` | Trigger processing: routes to correct pipeline orchestrator |
+| `GET` | `/api/processing/[id]` | Run detail with steps (ordered) and transaction summary by status |
+| `GET` | `/api/push` | List push history, filterable by runId |
+| `POST` | `/api/push` | Push ready transactions to Cozero (3-step: create log, update, create entry) |
+| `GET` | `/api/agencies` | List all agencies with upload/run/exclusion counts |
+| `POST` | `/api/agencies` | Update agency Cozero IDs and config |
+| `GET` | `/api/suppliers` | Search suppliers, paginated |
+| `POST` | `/api/suppliers` | Upsert supplier mapping (name + businessActivity) |
+| `POST` | `/api/suppliers/sync` | Sync local suppliers with Cozero (match by name, optionally create missing) |
+| `GET` | `/api/config` | Return all config: activities, calcMethods, units, territories |
+| `POST` | `/api/config/import` | Import supplier mappings from CSV file |
 
 ---
 
@@ -171,171 +180,75 @@ sustainability-app/
 ### Layout
 
 ```
-RootLayout
+RootLayout (Poppins font, globals.css)
 └── AppShell
-    ├── Sidebar (navigation)
-    ├── Header (title, status)
+    ├── Sidebar (MSQ Blue, 8 nav links)
+    ├── Header
     └── {page content}
 ```
 
 ### Dashboard (`/`)
-
 ```
-DashboardPage
-├── SummaryCards (uploads count, pending runs, recent pushes)
-└── RecentActivity (timeline)
+DashboardPage (client component)
+├── SummaryCard[] (Processing Runs, Completed, Upload, Push History)
+└── Recent Runs Table (inline)
 ```
 
 ### Upload (`/upload`)
-
 ```
-UploadPage
-├── FileDropzone
-├── FilePreview (table preview of parsed data)
-├── ColumnMapper (map columns to Cozero fields)
-└── UploadHistory (recent uploads for selected agency)
-```
-
-### Processing (`/processing`)
-
-```
-ProcessingPage
-└── RunCard[] (list of processing runs)
-    └── StatusBadge
-
-ProcessingDetailPage (`/processing/[id]`)
-├── RunDetail
-│   └── StepStatus[] (per-step status indicators)
-└── RunActions (retry / push)
+UploadPage (client component)
+├── Pipeline Type Select
+├── Agency Select
+├── FY/Quarter Selectors (Cognos only)
+├── File Dropzone (drag-drop + browse)
+└── Upload & Process Button → redirects to /processing/[id]
 ```
 
-### History (`/history`)
-
+### Processing Detail (`/processing/[id]`)
 ```
-HistoryPage
-├── PushLog (table of all pushes)
-└── PushDetail (expandable detail: request payload, response, errors)
+RunDetailPage (client component)
+├── StatCard[] (Input, Excluded, Categorised, Remaining)
+├── StepCard[] (numbered steps with input→output counts, metadata, status)
+└── Transaction Summary (counts by pipelineStatus)
 ```
 
-### Agencies (`/agencies`)
-
+### Suppliers (`/suppliers`)
 ```
-AgenciesPage
-├── AgencyList
-│   └── AgencyCard[]
-└── AgencyForm (add/edit modal or panel)
+SuppliersPage (client component)
+├── Sync with Cozero Button
+└── DataTable (searchable: name, businessActivity)
 ```
 
 ---
 
 ## §5 — State Management
 
-This application uses **server-side state as the primary source of truth**, consistent with Next.js App Router conventions:
-
-- **Database (Prisma/SQLite):** All persistent state — agencies, uploads, processing runs, push history. API routes read from and write to the database.
-- **Server Components:** Pages fetch data directly from the database via Prisma. No client-side data fetching for initial page loads where possible.
-- **Client state (`useState`):** Used only for genuinely ephemeral UI concerns: form inputs before submission, modal open/close, drag-and-drop hover state, file preview selection.
-- **URL state:** Filters and pagination on list pages should be reflected in URL search params so that page refreshes preserve context.
-
-**No global client-side store (e.g. Zustand, Redux) is planned.** The application's data flow is request→process→store→display, not real-time reactive. If a future requirement demands real-time updates (e.g. live processing progress via WebSocket), introduce a minimal client store at that point — do not pre-build one.
-
-**Data revalidation:** After mutations (upload, trigger processing, push), use Next.js `revalidatePath()` or `router.refresh()` to refresh the displayed data from the server.
+- **Database (Prisma/SQLite):** All persistent state — agencies, uploads, runs, steps, transactions, push history, suppliers, config.
+- **Client state (`useState`):** Ephemeral UI: form inputs, loading states, drag-drop hover, edit modes.
+- **No global client-side store.** Data flow is request→process→store→display.
 
 ---
 
 ## §6 — Database Schema
 
-The Prisma schema covers five core entities. All timestamps use UTC.
+15 models across 3 categories. See `prisma/schema.prisma` for the full definition.
 
-```prisma
-generator client {
-  provider = "prisma-client-js"
-}
+### Core Processing Models
+- **Agency** — 20 MSQ agencies with Cozero location/BU/territory IDs, country, dbNames (JSON)
+- **Upload** — Uploaded files with pipeline type, stored path, status
+- **ProcessingRun** — Pipeline execution with FY, quarter, row counts, status
+- **ProcessingStep** — Individual step: name, order, input/output counts, metadata (JSON)
+- **Transaction** — Individual processed transaction with full source data, categorisation result, Cozero IDs, readyToUpload flag
+- **CozeroPush** — Cozero API call log: endpoint, request/response, cozeroLogId, status
 
-datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
-}
-
-model Agency {
-  id              String   @id @default(cuid())
-  name            String   @unique
-  cozeroEntityId  String?              // Cozero's identifier for this agency
-  contactEmail    String?
-  isActive        Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  uploads         Upload[]
-  processingRuns  ProcessingRun[]
-}
-
-model Upload {
-  id              String   @id @default(cuid())
-  agencyId        String
-  agency          Agency   @relation(fields: [agencyId], references: [id])
-  originalFilename String
-  storedPath      String               // Path to uploaded file on disk
-  fileType        String               // "xlsx", "csv", etc.
-  rowCount        Int?                 // Row count after parsing
-  status          String   @default("uploaded")  // uploaded | parsed | processing | processed | error
-  errorMessage    String?
-  uploadedAt      DateTime @default(now())
-  parsedData      String?              // JSON: parsed spreadsheet content (structured)
-
-  processingRuns  ProcessingRun[]
-}
-
-model ProcessingRun {
-  id              String   @id @default(cuid())
-  uploadId        String
-  upload          Upload   @relation(fields: [uploadId], references: [id])
-  agencyId        String
-  agency          Agency   @relation(fields: [agencyId], references: [id])
-  status          String   @default("pending")   // pending | running | completed | failed | cancelled
-  startedAt       DateTime?
-  completedAt     DateTime?
-  errorMessage    String?
-  createdAt       DateTime @default(now())
-
-  steps           ProcessingStep[]
-  cozeroePushes   CozeroPush[]
-}
-
-model ProcessingStep {
-  id              String   @id @default(cuid())
-  runId           String
-  run             ProcessingRun @relation(fields: [runId], references: [id])
-  stepName        String               // e.g. "validate", "transform", "llm_categorise", "map_to_cozero"
-  stepOrder       Int
-  status          String   @default("pending")   // pending | running | completed | failed | skipped
-  inputData       String?              // JSON: input to this step
-  outputData      String?              // JSON: output from this step
-  errorMessage    String?
-  startedAt       DateTime?
-  completedAt     DateTime?
-}
-
-model CozeroPush {
-  id              String   @id @default(cuid())
-  runId           String
-  run             ProcessingRun @relation(fields: [runId], references: [id])
-  cozeroEndpoint  String               // Which Cozero API endpoint was called
-  requestPayload  String               // JSON: what was sent
-  responseStatus  Int?                 // HTTP status code
-  responseBody    String?              // JSON: what came back
-  status          String   @default("pending")   // pending | sent | success | failed
-  errorMessage    String?
-  pushedAt        DateTime?
-  createdAt       DateTime @default(now())
-}
-```
-
-**Design notes:**
-
-- `parsedData`, `inputData`, `outputData`, `requestPayload`, and `responseBody` are stored as JSON strings in SQLite. This avoids a separate document store while keeping full audit trail of what was processed and sent.
-- `ProcessingStep` models the multi-step transformation pipeline. Each step records its input and output so that failed runs can be debugged and retried from the point of failure.
-- `CozeroPush` is a separate entity from `ProcessingRun` because a single run may produce multiple API calls to Cozero (one per activity type, or one per reporting period), and pushes may be retried independently.
+### Configuration Models
+- **Supplier** — Mapped suppliers: name (unique), businessActivity, cozeroSupplierId
+- **UnmappedSupplier** — Multi-category suppliers needing only cozeroSupplierId
+- **ActivityTaxonomy** — 37 valid category/subcategory/activity combinations with Cozero IDs
+- **AgencyExclusion** — Per-agency supplier exclusions (full or conditional with narrativeContains)
+- **CalculationMethod** — 3 methods: spend (45), employee-distance (40), nights (4)
+- **Unit** — 4 units: GBP (40), mile (14), km (16), room night (628)
+- **TerritoryMapping** — 25 country codes → Cozero territory IDs
 
 ---
 
@@ -343,90 +256,69 @@ model CozeroPush {
 
 ### Cozero API (`src/services/cozero.ts`)
 
-All communication with the Cozero REST API is handled through this single service module. No other file in the application may call the Cozero API directly.
+**Base URL:** `https://api.cozero.io/v1`
+**Organization ID:** 5137
 
-**Responsibilities:**
-- Authenticate with the Cozero API (API key or OAuth token — to be confirmed during implementation)
-- Push activity data to Cozero
-- Handle rate limiting, retries, and error responses
-- Map internal data structures to Cozero's expected payload format
-
-**Boundaries:**
-- The service receives fully transformed, Cozero-ready data. It does not perform any business logic or data transformation.
-- All Cozero API types are defined in `src/types/cozero.ts`.
-- API credentials are read from environment variables — never hardcoded.
-- Every API call is logged to the `CozeroPush` table via Prisma before and after execution.
+Functions:
+- `authenticate()` — POST /v1/auth/token, caches token with expiry
+- `createLog(payload)` — POST /v1/log (Step 1: category_id)
+- `updateLog(logId, payload)` — PUT /v1/log/{id} (Step 2: dates, location, BU)
+- `createLogEntry(logId, payload)` — POST /v1/log/{id}/log-entry (Step 3: subcategory, activity, method, unit, value, territory)
+- `listSuppliers(page, pageSize)` — GET /v1/supplier with pagination
+- `createSupplier(name)` — POST /v1/supplier
+- `fetchAllSuppliers()` — Paginated fetch all
+- `searchLogEntries(params, body)` — POST /v1/log/log-entries/search (duplicate checking)
 
 ### Anthropic API (`src/services/anthropic.ts`)
 
-All communication with the Anthropic API is handled through this single service module. No other file in the application may call the Anthropic API directly.
+**Model:** Claude Sonnet 4.6 (`claude-sonnet-4-6-20250514`)
+**Batch size:** 150 transactions per API call
 
-**Responsibilities:**
-- Send data transformation prompts to the Anthropic API
-- Parse structured responses from the LLM
-- Handle rate limiting, retries, and error responses
+Functions:
+- `categoriseSuppliers(suppliers, agencyName)` — Supplier-level MAP/OUT_OF_SCOPE/MIXED_USE/DO_NOT_MAP
+- `categoriseTransactions(transactions, pipelineType, batchSize)` — Per-transaction categorisation
+- `buildSupplierSystemPrompt(agencyName)` — Full taxonomy, OOS rules, recommendation types
+- `buildTransactionSystemPrompt(pipelineType)` — Full taxonomy, 7 categorisation rules, Cognos vs CC field guides
 
-**Use cases (anticipated):**
-- Categorising ambiguous line items into Cozero activity types
-- Extracting structured data from inconsistently formatted spreadsheets
-- Normalising unit descriptions (e.g. "kilowatt hours", "kWh", "kwh" → standard unit)
+### Processing Pipeline (`src/services/processing.ts` + `src/services/processing/`)
 
-**Boundaries:**
-- The service receives raw or partially transformed data and returns structured output. It does not write to the database or call the Cozero API.
-- All Anthropic API types are defined in `src/types/anthropic.ts`.
-- API credentials are read from environment variables — never hardcoded.
-- Every LLM call should be logged (step-level in `ProcessingStep`) for auditability and debugging.
+Top-level `runProcessingPipeline()` routes to:
+- **Cognos** (9 steps): parse → filter agency/quarter → agency exclusions → zero amounts → accounting entries → supplier mapping → AI supplier recommendations → AI transaction categorisation → assemble payloads
+- **Credit Card** (6 steps): parse → MCC categorisation → supplier mapping → AI supplier recommendations → AI transaction categorisation → assemble payloads
+- **TravelPerk** (3 steps): parse CSV → build payloads (flights/hotels/trains) → duplicate check
+- **Corporate Traveller** (3 steps): parse XLSX → build payloads (flights/rail, km units) → duplicate check
 
-### Processing Pipeline (`src/services/processing.ts`)
-
-The processing pipeline orchestrates the transformation of uploaded data into Cozero-ready payloads. It calls the Anthropic and Cozero services but does not contain any direct API logic itself.
-
-**Typical pipeline:**
-1. **Validate** — check that parsed data has required columns and data types
-2. **Transform** — normalise units, clean values, apply business rules
-3. **LLM Categorise** — call `anthropic.ts` to categorise ambiguous items
-4. **Map to Cozero** — convert to Cozero's expected payload structure
-5. **Push** — call `cozero.ts` to send data
-
-Each step is recorded as a `ProcessingStep` in the database.
+Shared engine (`categorisationEngine.ts`): exclusions, zero amounts, accounting entries, supplier mapping, MCC rules.
 
 ---
 
 ## §8 — Key Architectural Rules
 
-These rules must be followed throughout the build. They exist to prevent architectural drift and maintain clear boundaries.
-
 ### API Service Boundaries
-
-1. **All Cozero API calls must go through `src/services/cozero.ts`.** No component, page, API route, or other module may import or use a Cozero HTTP client directly.
-2. **All Anthropic API calls must go through `src/services/anthropic.ts`.** No component, page, API route, or other module may import or use the Anthropic SDK directly.
-3. **All database access must go through Prisma via `src/lib/db.ts`.** No raw SQL. No alternative database clients.
+1. **All Cozero API calls through `src/services/cozero.ts`.**
+2. **All Anthropic API calls through `src/services/anthropic.ts`.**
+3. **All database access through Prisma via `src/lib/db.ts`.** No raw SQL.
 
 ### Credentials and Configuration
-
-4. **Never hardcode API credentials or keys.** All secrets must be read from environment variables defined in `.env.local`. The `.env.example` file documents required variables without values.
-5. **Never commit `.env.local` to version control.** It must be listed in `.gitignore`.
+4. **Never hardcode API credentials.** All secrets from `.env.local`.
+5. **Never commit `.env.local`.**
 
 ### Data Flow
-
-6. **Components and pages must not call external APIs directly.** All external communication goes through API routes, which call service modules.
-7. **Service modules must not import from components or pages.** Dependencies flow downward: pages → API routes → services → lib.
-8. **Pure transformation logic belongs in `src/lib/`.** Service modules orchestrate; `lib` functions transform.
+6. **Pages must not call external APIs directly.** Pages → API routes → services → lib.
+7. **Service modules must not import from components or pages.**
+8. **Pure transformation logic belongs in `src/lib/`.** Config constants in `src/config/`.
 
 ### TypeScript Standards
-
-9. **No `any` casts.** Use `unknown` and narrow explicitly.
-10. **Explicit return types** on all exported functions and API route handlers.
-11. **Interface definitions** for all API request/response payloads, service function parameters, and database query results that cross module boundaries.
+9. **No `any` casts.** Use `unknown` and narrow.
+10. **Explicit return types** on all exported functions.
+11. **Interface definitions** for all payloads crossing module boundaries.
 
 ### Documentation
-
-12. **At the end of every task,** update `Documentation/ARCHITECTURE.md` to reflect any changes to the file map, routes, components, schema, or service boundaries. Append a changelog entry to `Documentation/ARCHITECTURE_CHANGELOG.md`. Do not replace existing changelog content.
-13. **Read the current version number from the file on disk** and increment by one patch version. Do not guess or assume the current version.
+12. **Update ARCHITECTURE.md** after every task. Append to ARCHITECTURE_CHANGELOG.md.
+13. **Read current version from disk** and increment by one patch version.
 
 ### Git
-
-14. **Do not push to git.** When a task is complete, confirm which files were changed and their locations. Neil handles all git operations manually.
+14. **Do not push to git.** Confirm changed files. Neil handles git.
 
 ---
 
@@ -435,18 +327,17 @@ These rules must be followed throughout the build. They exist to prevent archite
 | Path | Purpose |
 |------|---------|
 | `src/services/cozero.ts` | **All** Cozero API communication |
-| `src/services/anthropic.ts` | **All** Anthropic API communication |
-| `src/services/processing.ts` | Processing pipeline orchestration |
+| `src/services/anthropic.ts` | **All** Anthropic API communication (with full prompt templates) |
+| `src/services/processing.ts` | Top-level pipeline orchestrator |
+| `src/services/processing/` | 4 pipeline orchestrators + shared categorisation engine |
 | `src/lib/db.ts` | Prisma client singleton |
-| `src/lib/validators.ts` | Zod validation schemas |
-| `src/lib/transformers.ts` | Pure data transformation functions |
-| `src/lib/fileParser.ts` | Spreadsheet/CSV parsing |
-| `src/lib/columnMapping.ts` | Column detection and mapping |
+| `src/lib/fileParser.ts` | XLSX/CSV parsing, date conversion |
+| `src/lib/validators.ts` | Column validation for all 4 pipelines |
+| `src/lib/transformers.ts` | Transaction builders, Cozero payload assembly |
+| `src/lib/aiResponseParser.ts` | Three-tier AI response JSON parser |
+| `src/config/` | All configuration constants (MCC rules, exclusions, territories, mappings) |
 | `src/types/` | All TypeScript type definitions |
-| `src/config/activityTypes.ts` | Cozero activity type definitions |
-| `prisma/schema.prisma` | Database schema |
+| `prisma/schema.prisma` | Database schema (15 models) |
+| `prisma/seed.ts` | Seed: 20 agencies, 37 activities, calc methods, units, territories |
 | `.env.local` | API keys and secrets (gitignored) |
-| `.env.example` | Required environment variable template |
 | `CLAUDE.md` | Claude Code session rules |
-| `Documentation/ARCHITECTURE.md` | This file |
-| `Documentation/ARCHITECTURE_CHANGELOG.md` | Version history |

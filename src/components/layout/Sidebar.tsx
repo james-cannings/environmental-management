@@ -13,6 +13,7 @@ const navItems: NavItem[] = [
   { href: "/", label: "Dashboard" },
   { href: "/upload", label: "Upload" },
   { href: "/processing", label: "Processing" },
+  { href: "/suppliers", label: "Suppliers" },
   { href: "/history", label: "Push History" },
   { href: "/agencies", label: "Agencies" },
   { href: "/settings", label: "Settings" },
